@@ -146,8 +146,13 @@ export default function Page() {
     if (!clean || clean.length > 500 || !userId || !matchId || !supabase || isSending) return
     setIsSending(true)
     const { data, error } = await supabase.from('tomble_messages').insert({ match_id: matchId, sender_id: userId, body: clean }).select('id,created_at').single()
-    if (!error) setMessages((items) => items.some((item) => item.id === data.id) ? items : [...items, { id: data.id, from: 'me', text: clean, createdAt: data.created_at }])
-    setMessage('')
+    if (error) {
+      alert("Failed to send: " + error.message)
+      console.error("Message send error:", error)
+    } else {
+      setMessages((items) => items.some((item) => item.id === data.id) ? items : [...items, { id: data.id, from: 'me', text: clean, createdAt: data.created_at }])
+      setMessage('')
+    }
     setIsSending(false)
   }
 
