@@ -68,9 +68,10 @@ export default function Page() {
     if (channelRef.current) supabase.removeChannel(channelRef.current)
     const channel = supabase.channel(`tomble-match-${currentMatchId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tomble_messages', filter: `match_id=eq.${currentMatchId}` }, (payload) => {
-        const row = payload.new as { id: string; sender_id: string; body: string; created_at: string }
+        const row = payload.new as any
         if (row.sender_id === id) return
-        setMessages((items) => items.some((item) => item.id === row.id) ? items : [...items, { id: row.id, from: 'them', text: row.body, createdAt: row.created_at }])
+        const messageText = row.body || row.content || row.text || row.message || ''
+        setMessages((items) => items.some((item) => item.id === row.id) ? items : [...items, { id: row.id, from: 'them', text: messageText, createdAt: row.created_at }])
         setPartnerTyping(false)
         playSound()
         setTimeout(() => { if (channelRef.current) channelRef.current.send({ type: 'broadcast', event: 'read', payload: { sender_id: id, message_id: row.id } }) }, 500)
@@ -90,8 +91,8 @@ export default function Page() {
   const loadMatch = async (id: string, nextMatchId: string) => {
     if (!supabase) return
     setMatchId(nextMatchId)
-    const { data } = await supabase.from('tomble_messages').select('id,sender_id,body,created_at').eq('match_id', nextMatchId).order('created_at', { ascending: true })
-    setMessages((data ?? []).map((row) => ({ id: row.id, from: row.sender_id === id ? 'me' : 'them', text: row.body, createdAt: row.created_at })))
+    const { data } = await supabase.from('tomble_messages').select('*').eq('match_id', nextMatchId).order('created_at', { ascending: true })
+    setMessages((data ?? []).map((row: any) => ({ id: row.id, from: row.sender_id === id ? 'me' : 'them', text: row.body || row.content || row.text || row.message || '', createdAt: row.created_at })))
     connectRealtime(id, nextMatchId)
     setView('chat')
   }
@@ -145,12 +146,19 @@ export default function Page() {
     const clean = message.trim()
     if (!clean || clean.length > 500 || !userId || !matchId || !supabase || isSending) return
     setIsSending(true)
-    const { data, error } = await supabase.from('tomble_messages').insert({ match_id: matchId, sender_id: userId, body: clean }).select('id,created_at').single()
-    if (error) {
-      alert("Failed to send: " + error.message)
-      console.error("Message send error:", error)
-    } else {
-      setMessages((items) => items.some((item) => item.id === data.id) ? items : [...items, { id: data.id, from: 'me', text: clean, createdAt: data.created_at }])
+    
+    let result = await supabase.from('tomble_messages').insert({ match_id: matchId, sender_id: userId, body: clean }).select('*').single()
+    if (result.error && result.error.message.includes('body')) result = await supabase.from('tomble_messages').insert({ match_id: matchId, sender_id: userId, content: clean }).select('*').single()
+    if (result.error && result.error.message.includes('content')) result = await supabase.from('tomble_messages').insert({ match_id: matchId, sender_id: userId, text: clean }).select('*').single()
+    if (result.error && result.error.message.includes('text')) result = await supabase.from('tomble_messages').insert({ match_id: matchId, sender_id: userId, message: clean }).select('*').single()
+
+    if (result.error) {
+      alert("Failed to send: " + result.error.message)
+      console.error("Message send error:", result.error)
+    } else if (result.data) {
+      const row = result.data as any
+      const messageText = row.body || row.content || row.text || row.message || clean
+      setMessages((items) => items.some((item) => item.id === row.id) ? items : [...items, { id: row.id, from: 'me', text: messageText, createdAt: row.created_at }])
       setMessage('')
     }
     setIsSending(false)
