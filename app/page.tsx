@@ -86,7 +86,7 @@ export default function Page() {
       setTimeout(() => { if (active && channelRef.current) channelRef.current.send({ type: 'broadcast', event: 'read', payload: { sender_id: userId, message_id: row.id } }) }, 500)
     }
 
-    const channel = supabase.channel(`match:${matchId}`, { config: { private: true } })
+    const channel = supabase.channel(`match:${matchId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tomble_messages', filter: `match_id=eq.${matchId}` }, (payload) => {
         console.log("Realtime INSERT received:", payload)
         handleNewMessage(payload.new)
@@ -118,7 +118,7 @@ export default function Page() {
       supabase.removeChannel(channel)
       channelRef.current = null
     }
-  }, [matchId, userId, supabase, playSound])
+  }, [matchId, userId, supabase])
 
   const start = () => setView('age')
   const toggleInterest = (interest: string) => setInterests((items) => items.includes(interest) ? items.filter((item) => item !== interest) : [...items, interest])
