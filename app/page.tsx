@@ -64,16 +64,22 @@ export default function Page() {
     if (!matchId || !userId || !supabase) return
 
     let active = true
+    const handleNewMessage = (row: any) => {
+      if (!active || !row || row.sender_id === userId) return
+      const messageText = row.body || row.content || row.text || row.message || ''
+      setMessages((items) => items.some((item) => item.id === row.id) ? items : [...items, { id: row.id, from: 'them', text: messageText, createdAt: row.created_at || row.createdAt || new Date().toISOString() }])
+      setPartnerTyping(false)
+      playSound()
+      setTimeout(() => { if (active && channelRef.current) channelRef.current.send({ type: 'broadcast', event: 'read', payload: { sender_id: userId, message_id: row.id } }) }, 500)
+    }
+
     const channel = supabase.channel(`match:${matchId}`, { config: { private: true } })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tomble_messages', filter: `match_id=eq.${matchId}` }, (payload) => {
-        if (!active) return
-        const row = payload.new as any
-        if (row.sender_id === userId) return
-        const messageText = row.body || row.content || row.text || row.message || ''
-        setMessages((items) => items.some((item) => item.id === row.id) ? items : [...items, { id: row.id, from: 'them', text: messageText, createdAt: row.created_at }])
-        setPartnerTyping(false)
-        playSound()
-        setTimeout(() => { if (active && channelRef.current) channelRef.current.send({ type: 'broadcast', event: 'read', payload: { sender_id: userId, message_id: row.id } }) }, 500)
+        handleNewMessage(payload.new)
+      })
+      .on('broadcast', { event: 'INSERT' }, ({ payload }) => {
+        const record = payload?.record ?? payload
+        handleNewMessage(record)
       })
       .on('broadcast', { event: 'typing' }, (payload) => {
         if (!active) return
