@@ -65,9 +65,22 @@ export default function Page() {
 
     let active = true
     const handleNewMessage = (row: any) => {
-      if (!active || !row || row.sender_id === userId) return
+      console.log("handleNewMessage called with:", row, "active:", active, "userId:", userId)
+      if (!active || !row) return
+      if (row.sender_id === userId) {
+        console.log("Ignoring message because sender_id matches my userId")
+        return
+      }
       const messageText = row.body || row.content || row.text || row.message || ''
-      setMessages((items) => items.some((item) => item.id === row.id) ? items : [...items, { id: row.id, from: 'them', text: messageText, createdAt: row.created_at || row.createdAt || new Date().toISOString() }])
+      console.log("Extracted text:", messageText, "row.id:", row.id)
+      setMessages((items) => {
+        if (items.some((item) => item.id === row.id)) {
+          console.log("Duplicate ignored for id:", row.id)
+          return items
+        }
+        console.log("Adding message to state")
+        return [...items, { id: row.id, from: 'them', text: messageText, createdAt: row.created_at || row.createdAt || new Date().toISOString() }]
+      })
       setPartnerTyping(false)
       playSound()
       setTimeout(() => { if (active && channelRef.current) channelRef.current.send({ type: 'broadcast', event: 'read', payload: { sender_id: userId, message_id: row.id } }) }, 500)
@@ -79,8 +92,8 @@ export default function Page() {
         handleNewMessage(payload.new)
       })
       .on('broadcast', { event: 'INSERT' }, ({ payload }) => {
-        console.log("Broadcast INSERT received:", payload)
-        const record = payload?.record ?? payload
+        console.log("Broadcast INSERT raw payload:", JSON.stringify(payload))
+        const record = payload?.record ?? payload?.new ?? payload
         handleNewMessage(record)
       })
       .on('broadcast', { event: 'typing' }, (payload) => {
@@ -198,7 +211,6 @@ export default function Page() {
   }
 
   const nextTomble = async () => {
-    if (supabase && matchId) await supabase.rpc('tomble_end_match', { p_match_id: matchId })
     if (channelRef.current && supabase) supabase.removeChannel(channelRef.current)
     if (waitChannelRef.current && supabase) supabase.removeChannel(waitChannelRef.current)
     setMatchIndex((index) => index + 1); setMatchId(null); setPartnerId(null); setMessages([]); setPartnerTyping(false); setConnection('waiting for a match'); setView('matching')
