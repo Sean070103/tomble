@@ -60,40 +60,53 @@ export default function Page() {
   }, [supabase])
   useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' }) }, [messages, partnerTyping])
 
-  const start = () => setView('age')
-  const toggleInterest = (interest: string) => setInterests((items) => items.includes(interest) ? items.filter((item) => item !== interest) : [...items, interest])
+  useEffect(() => {
+    if (!matchId || !userId || !supabase) return
 
-  const connectRealtime = (id: string, currentMatchId: string) => {
-    if (!supabase || !currentMatchId) return
-    if (channelRef.current) supabase.removeChannel(channelRef.current)
-    const channel = supabase.channel(`tomble-match-${currentMatchId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tomble_messages', filter: `match_id=eq.${currentMatchId}` }, (payload) => {
+    let active = true
+    const channel = supabase.channel(`match:${matchId}`, { config: { private: true } })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tomble_messages', filter: `match_id=eq.${matchId}` }, (payload) => {
+        if (!active) return
         const row = payload.new as any
-        if (row.sender_id === id) return
+        if (row.sender_id === userId) return
         const messageText = row.body || row.content || row.text || row.message || ''
         setMessages((items) => items.some((item) => item.id === row.id) ? items : [...items, { id: row.id, from: 'them', text: messageText, createdAt: row.created_at }])
         setPartnerTyping(false)
         playSound()
-        setTimeout(() => { if (channelRef.current) channelRef.current.send({ type: 'broadcast', event: 'read', payload: { sender_id: id, message_id: row.id } }) }, 500)
+        setTimeout(() => { if (active && channelRef.current) channelRef.current.send({ type: 'broadcast', event: 'read', payload: { sender_id: userId, message_id: row.id } }) }, 500)
       })
       .on('broadcast', { event: 'typing' }, (payload) => {
-        if (payload.payload.sender_id !== id) {
-          setPartnerTyping(payload.payload.isTyping)
-        }
+        if (!active) return
+        if (payload.payload.sender_id !== userId) setPartnerTyping(payload.payload.isTyping)
       })
       .on('broadcast', { event: 'read' }, (payload) => {
-        if (payload.payload.sender_id !== id) setLastReadMessageId(payload.payload.message_id)
+        if (!active) return
+        if (payload.payload.sender_id !== userId) setLastReadMessageId(payload.payload.message_id)
       })
-      .subscribe((status) => setConnection(status === 'SUBSCRIBED' ? 'connected' : status.toLowerCase()))
+      .subscribe((status) => {
+        console.log('Chat channel status:', status)
+        if (status === 'CHANNEL_ERROR') console.error('Chat channel error')
+        if (status === 'TIMED_OUT') console.error('Chat channel timed out')
+        if (active) setConnection(status === 'SUBSCRIBED' ? 'connected' : status.toLowerCase())
+      })
+
     channelRef.current = channel
-  }
+
+    return () => {
+      active = false
+      supabase.removeChannel(channel)
+      channelRef.current = null
+    }
+  }, [matchId, userId, supabase, playSound])
+
+  const start = () => setView('age')
+  const toggleInterest = (interest: string) => setInterests((items) => items.includes(interest) ? items.filter((item) => item !== interest) : [...items, interest])
 
   const loadMatch = async (id: string, nextMatchId: string) => {
     if (!supabase) return
     setMatchId(nextMatchId)
     const { data } = await supabase.from('tomble_messages').select('*').eq('match_id', nextMatchId).order('created_at', { ascending: true })
     setMessages((data ?? []).map((row: any) => ({ id: row.id, from: row.sender_id === id ? 'me' : 'them', text: row.body || row.content || row.text || row.message || '', createdAt: row.created_at })))
-    connectRealtime(id, nextMatchId)
     setView('chat')
   }
 
@@ -195,7 +208,7 @@ export default function Page() {
     {view === 'username' && <section className="panel-section setup-panel"><div className="panel-heading"><p className="eyebrow">temporary by design</p><h2>what should we<br /><em>call you?</em></h2><p>Choose a nickname for this session only. No email, account, or real name needed.</p></div><div className="setup-form"><label>Temporary nickname<input value={username} onChange={(event) => setUsername(event.target.value.slice(0, 24))} placeholder="Luna" maxLength={24} /></label><button className="primary-button full" onClick={() => username.trim() && setView('interests')}>Choose interests <span>↗</span></button></div></section>}
     {view === 'interests' && <section className="panel-section setup-panel"><div className="panel-heading"><p className="eyebrow">make it feel less random</p><h2>what are you<br /><em>into lately?</em></h2><p>Pick a few things. We use them to find a more natural first hello.</p></div><div className="interest-grid">{interestOptions.map((interest) => <button key={interest} className={interests.includes(interest) ? 'interest-chip selected' : 'interest-chip'} onClick={() => toggleInterest(interest)}>{interest}</button>)}</div><button className="primary-button full" onClick={beginMatching}>Start Tombling <span>↗</span></button></section>}
     {view === 'matching' && <section className="matching-section"><div className="matching-orbit"><div className="orbit-ring" /><div className="mini-avatar mini-one">{username[0]}</div><div className="mini-avatar mini-two">{current.name[0]}</div><div className="orbit-center">t<span>.</span></div></div><p className="eyebrow">{connection === 'connected' ? 'match found' : 'finding someone...'}</p><h2>{connection === 'connected' ? <>you found your<br /><em>kind of strange.</em></> : <>looking for your<br /><em>kind of strange...</em></>}</h2><p className="matching-note">{connection}. Session {sessionId.slice(0, 8)}…</p><div className="loading-line"><span /></div><button className="text-button" onClick={() => setView('chat')}>skip the suspense →</button></section>}
-    {view === 'chat' && <section className="chat-section"><div className="chat-header"><button className="back-button" onClick={() => setView('matching')} aria-label="Back to matching">←</button><div className={`face small face-${current.color}`}>{current.name[0]}</div><div><strong>{current.name}, {current.age}</strong><span>anonymous match · {connection}</span></div><button className="more-button" onClick={report} aria-label="Report this person">•••</button></div><div className="chat-intro"><span className="intro-line" /><p>You both showed up for a<br /><strong>good conversation.</strong></p><span className="intro-line" /></div><div className="messages" ref={listRef}>{messages.length === 0 && <div className="empty-chat">Say hello to start the conversation.</div>}{messages.map((item) => <div key={item.id} className={`message-row ${item.from === 'me' ? 'mine' : ''} animate-in fade-in slide-in-from-bottom-2 duration-300`}><div style={{ display: 'flex', flexDirection: 'column', alignItems: item.from === 'me' ? 'flex-end' : 'flex-start' }}><div className="message"><small>{item.from === 'me' ? 'You' : current.name}</small>{item.text}</div>{item.id === lastReadMessageId && item.from === 'me' && <span style={{ fontSize: 10, color: 'rgba(32,20,38,0.5)', marginTop: 4, marginRight: 4 }}>Read</span>}</div></div>)}{partnerTyping && <div className="message-row animate-in fade-in slide-in-from-bottom-2 duration-300"><div className="message typing-indicator"><span/><span/><span/></div></div>}</div><div className="chat-footer"><button className="soft-button" onClick={report}>report</button><button className="soft-button" onClick={block}>block</button><input value={message} onChange={(event) => handleTyping(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) void send() }} placeholder="say something nice..." aria-label="Message" maxLength={500} /><button className="send-button" onClick={() => void send()} disabled={isSending} aria-label="Send message">↑</button></div><button className="next-button" onClick={() => void nextTomble()}>Next Tomble <span>→</span></button></section>}
+    {view === 'chat' && <section className="chat-section"><div className="chat-header"><button className="back-button" onClick={() => setView('matching')} aria-label="Back to matching">←</button><div className={`face small face-${current.color}`}>{current.name[0]}</div><div><strong>{current.name}, {current.age}</strong><span>anonymous match · {connection}</span></div><button className="more-button" onClick={report} aria-label="Report this person">•••</button></div><div className="chat-intro"><span className="intro-line" /><p>You both showed up for a<br /><strong>good conversation.</strong></p><span className="intro-line" /></div><div className="messages" ref={listRef}>{messages.length === 0 && <div className="empty-chat">Say hello to start the conversation.</div>}{messages.map((item) => <div key={item.id} className={`message-row ${item.from === 'me' ? 'mine' : ''} animate-in fade-in slide-in-from-bottom-2 duration-300`}><div className={`message-wrapper ${item.from === 'me' ? 'mine' : ''}`}><div className="message"><small>{item.from === 'me' ? 'You' : current.name}</small>{item.text}</div>{item.id === lastReadMessageId && item.from === 'me' && <span style={{ fontSize: 10, color: 'rgba(32,20,38,0.5)', marginTop: 4, marginRight: 4 }}>Read</span>}</div></div>)}{partnerTyping && <div className="message-row animate-in fade-in slide-in-from-bottom-2 duration-300"><div className="message typing-indicator"><span/><span/><span/></div></div>}</div><div className="chat-footer"><button className="soft-button" onClick={report}>report</button><button className="soft-button" onClick={block}>block</button><input value={message} onChange={(event) => handleTyping(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) void send() }} placeholder="say something nice..." aria-label="Message" maxLength={500} /><button className="send-button" onClick={() => void send()} disabled={isSending} aria-label="Send message">↑</button></div><button className="next-button" onClick={() => void nextTomble()}>Next Tomble <span>→</span></button></section>}
     <footer className="footer"><span>tomble<span className="brand-dot">.</span></span><span>temporary by design · session expires when you leave</span><span>community guidelines ↗</span></footer>
   </main>
 }
